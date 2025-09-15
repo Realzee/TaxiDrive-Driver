@@ -481,7 +481,7 @@
                         <div class="item-icon"><i class="fas fa-route"></i></div>
                         <div class="item-details">
                             <h4 id="current-route">Soweto to Johannesburg</h4>
-                            <p>Toyota HiACE (ABC 123 EC)</p>
+                            <p id="current-route-vehicle">Toyota HiACE (ABC 123 EC)</p>
                         </div>
                     </div>
                 </div>
@@ -692,6 +692,7 @@ const firebaseConfig = {
         let userId = null;
         let dutyStatus = 'off';
         let driverName = '';
+        let allocatedVehicle = null;
         let todaysEarnings = 0;
 
         // Initialize maps
@@ -855,6 +856,10 @@ const firebaseConfig = {
                 alert('Please set Duty On to accept payments');
                 return;
             }
+            if (!allocatedVehicle) {
+                alert('No allocated vehicle. Cannot accept payment.');
+                return;
+            }
             db.ref(`users/drivers/${userId}/walletBalance`).transaction(balance => {
                 return (balance || 0) + currentFare;
             }, (error, committed) => {
@@ -869,13 +874,13 @@ const firebaseConfig = {
                 time: new Date().toLocaleString(),
                 amount: currentFare,
                 driver: userId,
-                vehicle: 'Hi-Ace (ABC123GP)'
+                vehicle: `${allocatedVehicle.model} (${allocatedVehicle.reg})`
             });
                 db.ref(`users/drivers/${userId}/vehicle/ownerId`).once('value', snapshot => {
                     const ownerId = snapshot.val();
                     if (ownerId) {
                         db.ref(`users/owners/${ownerId}/earnings`).push({
-                            vehicle: 'Hi-ACE (ABC123GP)',
+                            vehicle: `${allocatedVehicle.model} (${allocatedVehicle.reg})`,
                             time: new Date().toLocaleString(),
                             amount: currentFare,
                             driver: driverName
@@ -942,17 +947,18 @@ const firebaseConfig = {
                     updateDutyStatus(dutyStatus);
                     document.getElementById('user-name').textContent = driverName;
 
-                    // Fetch owner vehicle info and update current route vehicle display
+                    // Fetch allocated vehicle from owner
                     const ownerId = data?.vehicle?.ownerId;
                     if (ownerId) {
-                        db.ref(`users/owners/${ownerId}/vehicle`).once('value', snapshot => {
-                            const vehicleData = snapshot.val();
-                            if (vehicleData) {
-                                const vehicleDesc = `${vehicleData.model} (${vehicleData.reg})`;
-                                const currentRouteVehicleElem = document.querySelector('.section-title + .card .item-details p');
-                                if (currentRouteVehicleElem) {
-                                    currentRouteVehicleElem.textContent = vehicleDesc;
-                                }
+                        db.ref(`users/owners/${ownerId}/allocations/${userId}`).once('value', snapshot => {
+                            allocatedVehicle = snapshot.val();
+                            if (allocatedVehicle) {
+                                document.getElementById('current-route-vehicle').textContent = `${allocatedVehicle.model} (${allocatedVehicle.reg})`;
+                            } else {
+                                document.getElementById('current-route-vehicle').textContent = 'No allocated vehicle';
+                                document.getElementById('duty-on-btn').disabled = true;
+                                document.getElementById('duty-off-btn').disabled = true;
+                                alert('No allocated vehicle. Contact owner.');
                             }
                         });
                     }
@@ -979,10 +985,14 @@ const firebaseConfig = {
                 walletBalance = 0;
                 dutyStatus = 'off';
                 driverName = '';
+                allocatedVehicle = null;
                 todaysEarnings = 0;
                 document.getElementById('wallet-balance').textContent = 'R 0.00';
                 document.getElementById('login-logout-btn').textContent = 'Login';
                 document.getElementById('user-name').textContent = '';
+                document.getElementById('current-route-vehicle').textContent = 'Toyota HiACE (ABC 123 EC)';
+                document.getElementById('duty-on-btn').disabled = false;
+                document.getElementById('duty-off-btn').disabled = false;
             }
         });
 
