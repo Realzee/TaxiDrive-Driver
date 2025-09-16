@@ -459,6 +459,7 @@
                     <button class="duty-btn" id="duty-off-btn" data-status="off">Duty Off</button>
                 </div>
             </div>
+            <p id="vehicle-status-display" style="font-weight:600;">Loading...</p>
             <div class="section-title">Quick Actions</div>
             <div class="quick-actions">
                 <div class="action-btn" id="scan-qr-btn">
@@ -957,63 +958,68 @@ const firebaseConfig = {
 
         // Authentication
         auth.onAuthStateChanged(user => {
-  console.log('Auth state changed:', user ? `UID: ${user.uid}, Email: ${user.email}` : 'No user');
-  if (user) {
-    isLoggedIn = true;
-    userId = user.uid;
-    console.log('Driver userId set:', userId);
-    db.ref(`users/drivers/${userId}`).once('value', snapshot => {
-      const data = snapshot.val();
-      console.log('Driver data:', data);
-                    walletBalance = data?.walletBalance || 0;
-                    dutyStatus = data.onDuty ? 'on' : 'off'
-                    driverName = data?.name || 'Driver';
-                    updateDutyStatus(dutyStatus);
-                    document.getElementById('user-name').textContent = driverName;
-
-                    // Fetch owner vehicle info and update current route vehicle display
-                    const ownerId = data?.vehicle?.ownerId;
-                    if (ownerId) {
-                        db.ref(`users/owners/${ownerId}/vehicle`).once('value', snapshot => {
-                            const vehicleData = snapshot.val();
-                            if (vehicleData) {
-                                const vehicleDesc = `${vehicleData.model} (${vehicleData.reg})`;
-                                const currentRouteVehicleElem = document.querySelector('.section-title + .card .item-details p');
-                                if (currentRouteVehicleElem) {
-                                    currentRouteVehicleElem.textContent = vehicleDesc;
-                                }
+    console.log('Auth state changed:', user ? `UID: ${user.uid}, Email: ${user.email}` : 'No user');
+    if (user) {
+        isLoggedIn = true;
+        userId = user.uid;
+        console.log('Driver userId set:', userId);
+        db.ref(`users/drivers/${userId}`).once('value', snapshot => {
+            const data = snapshot.val();
+            console.log('Driver data:', data);
+            if (data) {
+                driverName = data.name || 'Unknown';
+                const vehicleId = data.vehicle && data.vehicle.ownerId ? 
+                    db.ref(`users/owners/${data.vehicle.ownerId}/vehicles`).orderByChild('driverId').equalTo(userId).once('value', vehicleSnap => {
+                        const vehicles = vehicleSnap.val();
+                        for (let vid in vehicles) {
+                            if (vehicles[vid].driverId === userId) {
+                                return vid;
                             }
-                        });
-                    }
-
-                    if (!data) {
-                        db.ref(`users/drivers/${userId}`).set({
-                            email: user.email,
-                            name: document.getElementById('signup-name').value || 'Driver',
-                            walletBalance: 0,
-                            dutyStatus: 'off',
-                            vehicle: {
-                                model: 'Toyota HiACE',
-                                reg: 'ABC 123 EC',
-                                ownerId: 'owner1'
-                            }
-                        });
-                    }
-                    updateEarningsHistory();
-                    calculateTodaysEarnings();
-                });
-            } else {
-                isLoggedIn = false;
-                userId = null;
-                walletBalance = 0;
-                dutyStatus = 'off';
-                driverName = '';
-                todaysEarnings = 0;
-                document.getElementById('wallet-balance').textContent = 'R 0.00';
-                document.getElementById('login-logout-btn').textContent = 'Login';
-                document.getElementById('user-name').textContent = '';
+                        }
+                        return null;
+                    }).then(vehicleId => {
+                        if (vehicleId) {
+                            db.ref(`users/owners/${data.vehicle.ownerId}/vehicles/${vehicleId}`).once('value', vSnap => {
+                                const vehicleData = vSnap.val();
+                                vehicleStatus = vehicleData.vehicleStatus || 'inactive';
+                                updateVehicleStatusUI();
+                            });
+                        } else {
+                            vehicleStatus = 'inactive';
+                            updateVehicleStatusUI();
+                        }
+                    }) : Promise.resolve();
+                dutyStatus = data.maintenance ? 'maintenance' : (data.onDuty ? 'on' : 'off');
+                document.getElementById('duty-on-btn').classList.toggle('active', data.onDuty && !data.maintenance);
+                document.getElementById('duty-on-btn').classList.toggle('inactive', !data.onDuty || data.maintenance);
+                document.getElementById('duty-off-btn').classList.toggle('active', !data.onDuty && !data.maintenance);
+                document.getElementById('duty-off-btn').classList.toggle('inactive', data.onDuty || data.maintenance);
+                document.getElementById('maintenance-btn').classList.toggle('active', data.maintenance);
+                document.getElementById('maintenance-btn').classList.toggle('inactive', !data.maintenance);
+                calculateTodaysEarnings();
+                updateEarningsHistory();
             }
+        }).catch(error => {
+            console.error('Error fetching driver data:', error.message);
         });
+    } else {
+        isLoggedIn = false;
+        userId = null;
+        driverName = null;
+        dutyStatus = 'off';
+        window.location.href = '/login.html';
+    }
+});
+
+function updateVehicleStatusUI() {
+    const statusDisplay = document.getElementById('vehicle-status-display');
+    if (statusDisplay) {
+        statusDisplay.textContent = vehicleStatus === 'maintenance' ? 'Maintenance' : 
+                                  vehicleStatus === 'active' ? 'Active' : 'Inactive';
+        statusDisplay.style.color = vehicleStatus === 'maintenance' ? 'var(--warning)' : 
+                                   vehicleStatus === 'active' ? 'var(--success)' : 'var(--danger)';
+    }
+}
 
         document.getElementById('login-logout-btn').addEventListener('click', () => {
             if (isLoggedIn) {
