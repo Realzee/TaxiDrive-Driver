@@ -753,18 +753,25 @@ const firebaseConfig = {
 
         // Update duty status
         function updateDutyStatus(status) {
-            if (!userId) return;
-            dutyStatus = status;
-            db.ref(`users/drivers/${userId}/dutyStatus`).set(status).then(() => {
-                document.getElementById('duty-on-btn').classList.toggle('active', status === 'on');
-                document.getElementById('duty-on-btn').classList.toggle('inactive', status !== 'on');
-                document.getElementById('duty-off-btn').classList.toggle('active', status === 'off');
-                document.getElementById('duty-off-btn').classList.toggle('inactive', status !== 'off');
-            }).catch(error => {
-                alert('Error updating duty status: ' + error.message);
-            });
-        }
-
+    if (!userId) {
+        console.log('No userId, cannot update duty status');
+        alert('Please log in to update duty status');
+        return;
+    }
+    const isOnDuty = status === 'on';
+    console.log(`Updating duty status for driver ${userId} to ${isOnDuty}`);
+    dutyStatus = isOnDuty ? 'on' : 'off'; // Keep dutyStatus for UI consistency
+    db.ref(`users/drivers/${userId}/onDuty`).set(isOnDuty).then(() => {
+        console.log(`Duty status updated to ${isOnDuty}`);
+        document.getElementById('duty-on-btn').classList.toggle('active', status === 'on');
+        document.getElementById('duty-on-btn').classList.toggle('inactive', status !== 'on');
+        document.getElementById('duty-off-btn').classList.toggle('active', status === 'off');
+        document.getElementById('duty-off-btn').classList.toggle('inactive', status !== 'off');
+    }).catch(error => {
+        console.error('Error updating duty status:', error.message);
+        alert('Error updating duty status: ' + error.message);
+    });
+}
         // Calculate today's earnings
         function calculateTodaysEarnings() {
             if (!userId) return;
@@ -851,49 +858,69 @@ const firebaseConfig = {
 
         // Confirm payment
         document.getElementById('confirm-payment').addEventListener('click', () => {
-            if (dutyStatus !== 'on') {
-                alert('Please set Duty On to accept payments');
+    db.ref(`users/drivers/${userId}/onDuty`).once('value', snapshot => {
+        const isOnDuty = snapshot.val();
+        if (!isOnDuty) {
+            alert('Please set Duty On to accept payments');
+            return;
+        }
+        if (!userId) {
+            console.log('No userId, cannot process payment');
+            alert('Please log in to process payments');
+            return;
+        }
+        console.log(`Processing payment of R${currentFare} for driver ${userId}`);
+        db.ref(`users/drivers/${userId}/walletBalance`).transaction(balance => {
+            return (balance || 0) + currentFare;
+        }, (error, committed) => {
+            if (error || !committed) {
+                console.error('Error processing payment:', error ? error.message : 'Transaction failed');
+                alert('Error processing payment: ' + (error ? error.message : 'Transaction failed'));
                 return;
             }
-            db.ref(`users/drivers/${userId}/walletBalance`).transaction(balance => {
-                return (balance || 0) + currentFare;
-            }, (error, committed) => {
-                if (error || !committed) {
-                    alert('Error processing payment: ' + (error ? error.message : 'Transaction failed'));
-                    return;
-                }
-                walletBalance += currentFare;
-                db.ref(`users/drivers/${userId}/earnings`).push({
+            const earningData = {
                 passenger: document.getElementById('passenger-email').textContent,
                 route: 'Soweto to Johannesburg',
                 time: new Date().toLocaleString(),
                 amount: currentFare,
                 driver: userId,
                 vehicle: 'Hi-Ace (ABC123GP)'
-            });
+            };
+            console.log('Writing earning:', earningData);
+            db.ref(`users/drivers/${userId}/earnings`).push(earningData).then(() => {
                 db.ref(`users/drivers/${userId}/vehicle/ownerId`).once('value', snapshot => {
                     const ownerId = snapshot.val();
                     if (ownerId) {
+                        console.log(`Writing earning to owner ${ownerId}`);
                         db.ref(`users/owners/${ownerId}/earnings`).push({
-                            vehicle: 'Hi-ACE (ABC123GP)',
+                            vehicle: 'Hi-Ace (ABC123GP)',
                             time: new Date().toLocaleString(),
                             amount: currentFare,
                             driver: driverName
+                        }).catch(error => {
+                            console.error('Error writing to owner earnings:', error.message);
                         });
                     }
+                    todaysEarnings += currentFare;
+                    document.getElementById('wallet-balance').textContent = `R ${todaysEarnings.toFixed(2)}`;
+                    document.getElementById('payment-amount').textContent = currentFare.toFixed(2);
+                    updateEarningsHistory();
+                    closeModal('payment-details-modal');
+                    openModal('payment-success-modal');
+                }).catch(error => {
+                    console.error('Error fetching ownerId:', error.message);
+                    alert('Error processing payment: ' + error.message);
                 });
-                todaysEarnings += currentFare;
-                document.getElementById('wallet-balance').textContent = `R ${todaysEarnings.toFixed(2)}`;
-                document.getElementById('payment-amount').textContent = currentFare.toFixed(2);
-                updateEarningsHistory();
-                closeModal('payment-details-modal');
-                openModal('payment-success-modal');
+            }).catch(error => {
+                console.error('Error writing earning:', error.message);
+                alert('Error saving earning: ' + error.message);
             });
         });
-
-        document.getElementById('payment-ok-btn').addEventListener('click', () => {
-            closeModal('payment-success-modal');
-        });
+    }).catch(error => {
+        console.error('Error checking duty status:', error.message);
+        alert('Error checking duty status: ' + error.message);
+    });
+});
 
         // View routes
         document.getElementById('view-routes-btn').addEventListener('click', () => {
@@ -939,7 +966,7 @@ const firebaseConfig = {
       const data = snapshot.val();
       console.log('Driver data:', data);
                     walletBalance = data?.walletBalance || 0;
-                    dutyStatus = data?.dutyStatus || 'off';
+                    dutyStatus = data.onDuty ? 'on' : 'off'
                     driverName = data?.name || 'Driver';
                     updateDutyStatus(dutyStatus);
                     document.getElementById('user-name').textContent = driverName;
